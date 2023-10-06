@@ -4,6 +4,8 @@ import { ShopService } from './shop.service';
 import { ShopController } from './shop.controller';
 import { JwtModule } from '@nestjs/jwt';
 import { Shop, ShopSchema } from './schemas/shop.schema';
+import { ShopCommon } from './shop.common';
+import { HaravanCommon } from './shop.haravan';
 
 @Module({
   imports: [
@@ -12,7 +14,7 @@ import { Shop, ShopSchema } from './schemas/shop.schema';
     }),
     MongooseModule.forFeature([{ name: Shop.name, schema: ShopSchema }]),
   ],
-  providers: [ShopService],
+  providers: [ShopService, ShopCommon, HaravanCommon],
   controllers: [ShopController],
 })
 export class ShopModule {}

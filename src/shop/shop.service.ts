@@ -1,59 +1,66 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Issuer, custom } from 'openid-client';
-import { globalService } from 'src/global.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Shop, ShopDocument } from './schemas/shop.schema';
-import { CreateShopDto } from './dto/create-shop.dto';
+import { ShopCommon } from './shop.common';
+import { HaravanCommon } from './shop.haravan';
 
 @Injectable()
 export class ShopService {
   constructor(
     @InjectModel(Shop.name) private shopModel: Model<ShopDocument>,
+    private haravanCommon: HaravanCommon,
+    private shopCommon: ShopCommon,
     private jwtService: JwtService,
   ) {}
 
-  postLogin(data: any): string {
-    const decodeToken: any = this.jwtService.decode(data?.id_token);
+  async getLogin(orgid: string) {
+    const shopExists = await this.shopCommon.findShopByOrgid(orgid);
+    if (shopExists) {
+      return `http://localhost:3000/?orgid=${shopExists?.orgid}`;
+    }
+    return `https://accounts.haravan.com/connect/authorize?response_mode=${process.env.HRV_RES_MODE}&response_type=${process.env.HRV_RES_TYPE}&scope=${process.env.HRV_SCOPE_LOGIN}&client_id=${process.env.HRV_CLIENT_ID}&redirect_uri=${process.env.HRV_LOGIN_CB_URL}&nonce=${process.env.HRV_NONCE}`;
+  }
+
+  async postLogin(response, request) {
+    const decodeToken: any = this.jwtService.decode(request.body.id_token);
     if (decodeToken?.role[0] === 'admin') {
-      return decodeToken?.orgid;
+      const object_token_login: any = await this.haravanCommon.haravanBuilder(
+        request,
+        process.env.HRV_LOGIN_CB_URL,
+      );
+      const accessTokenLogin = object_token_login?.access_token;
+      const frontendDomain = process.env.FRONTEND_DOMAIN.toString();
+      response.cookie('f1multi_token', accessTokenLogin, {
+        httpOnly: true,
+        domain: frontendDomain,
+      });
+      return `https://accounts.haravan.com/connect/authorize?response_mode=${process.env.HRV_RES_MODE}&response_type=${process.env.HRV_RES_TYPE}&scope=${process.env.HRV_SCOPE_APP}&client_id=${process.env.HRV_CLIENT_ID}&redirect_uri=${process.env.HRV_INSTALL_CB_URL}&nonce=${process.env.HRV_NONCE}&orgid=${decodeToken.orgid}`;
     } else {
       throw new UnauthorizedException();
     }
   }
 
-  async getGrandService(data) {
-    const haravanIssuer = await Issuer.discover(
-      'https://accounts.haravan.com/.well-known/openid-configuration',
+  async getGrandService(request): Promise<string> {
+    const object_token_install: any = await this.haravanCommon.haravanBuilder(
+      request,
+      process.env.HRV_INSTALL_CB_URL,
     );
-    const client = new haravanIssuer.Client({
-      client_id: globalService.hrvConfig.client_id,
-      client_secret: globalService.hrvConfig.client_secret,
-      redirect_uris: [globalService.hrvConfig.install_callback_url],
-      response_types: ['code id_token'],
+
+    const decodeToken: any = this.jwtService.decode(
+      object_token_install?.id_token,
+    );
+    await this.shopCommon.createShop({
+      orgid: decodeToken?.orgid,
+      access_token_login: request.cookies['f1multi_token'],
+      access_token_install: object_token_install.refresh_token,
+      expire_time_install: object_token_install.expires_at,
+      refresh_token_install: object_token_install.refresh_token,
+      status_app: true,
+      shop_metafields: [{ key: 'vi' }],
     });
-
-    const nonce = globalService.hrvConfig.nonce;
-    const params = client.callbackParams(data);
-    params.client_id = globalService.hrvConfig.client_id;
-    params.client_secret = globalService.hrvConfig.client_secret;
-    params.grant_type = globalService.hrvConfig.grant_type;
-
-    const CLOCK_TOLERANCE = custom.clock_tolerance;
-    client[CLOCK_TOLERANCE as any] = 10;
-    const getToken: string = await client
-      .callback(globalService.hrvConfig.install_callback_url, params, { nonce })
-      .then(async function (tokenSet) {
-        return tokenSet.access_token;
-      });
-
-    const newShop = new this.shopModel({
-      ...CreateShopDto,
-      accessToken: getToken,
-    });
-    await newShop.save();
-
-    console.log(await this.shopModel.find({}).exec());
+    const frontendDomain = process.env.FRONTEND_URL.toString(); //
+    return frontendDomain;
   }
 }
