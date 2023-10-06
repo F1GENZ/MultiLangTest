@@ -1,6 +1,3 @@
-import { IsNotEmpty, IsString } from 'class-validator';
-export class ShopMetafieldsMember {
-  @IsNotEmpty()
-  @IsString()
+export interface ShopMetafieldsMember {
   key: string;
 }
